@@ -101,6 +101,10 @@ Sources/CodexNotchCoreTests/ 可执行检查套件（56 项）
 
 刘海面板的交互模式受 [BoringNotch](https://github.com/TheBoredTeam/boring.notch)、[AgentNotch](https://github.com/mattBonfanti/AgentNotch)、[Code Island](https://github.com/) 等社区项目启发；本项目没有复用它们的代码（BoringNotch 为 GPL-3.0）。额度读取思路延续了同作者的 [codex-touchbar-usage](https://github.com/github-bian/codex-touchbar-usage)。
 
+## 需求文档
+
+落地需求、验收标准与风险登记见 [docs/PRD.md](docs/PRD.md)。
+
 ## License
 
 [MIT](LICENSE)
