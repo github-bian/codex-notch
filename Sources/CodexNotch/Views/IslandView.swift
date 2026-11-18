@@ -5,28 +5,40 @@ struct IslandView: View {
     @ObservedObject var model: IslandViewModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    @AppStorage(IslandTheme.preferenceKey) private var theme = IslandTheme.system.rawValue
+    @Environment(\.colorScheme) private var colorScheme
+
     var body: some View {
+        let palette = IslandPalette.palette(for: IslandTheme.resolve(theme, dark: colorScheme == .dark))
+        let expandedHeight = NotchGeometry.expandedContentHeight(
+            hasQuota: model.snapshot.quota != nil,
+            hasReset: model.snapshot.quota?.resetsAt != nil,
+            hasContext: model.snapshot.contextPercent != nil
+        ) + (model.metrics.hasHardwareNotch ? max(0, model.metrics.notchHeight - 24) : 0)
+        let width = model.expanded ? NotchGeometry.expandedFrame(for: model.metrics).width : NotchGeometry.compactFrame(for: model.metrics).width
+        let height = model.expanded ? expandedHeight : NotchGeometry.compactFrame(for: model.metrics).height
         ZStack(alignment: .top) {
             if model.expanded || !model.snapshot.isIdle {
-                IslandBackground(metrics: model.metrics, expanded: model.expanded)
-                    .transition(.opacity)
+                IslandBackground(metrics: model.metrics, expanded: model.expanded, palette: palette)
             }
             if model.expanded {
-                ExpandedView(model: model).transition(.opacity)
+                ExpandedView(model: model, palette: palette).transition(.opacity)
             } else if !model.snapshot.isIdle {
-                CompactView(model: model).transition(.opacity)
-            } else {
-                Color.clear
+                CompactView(model: model, palette: palette).transition(.opacity)
             }
         }
+        .frame(width: width, height: height, alignment: .top)
+        .clipped()
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .animation(reduceMotion ? .easeOut(duration: 0.12) : .timingCurve(0.2, 0.8, 0.2, 1, duration: 0.32), value: model.expanded)
-        .animation(.easeOut(duration: 0.18), value: model.snapshot.phase)
+        .animation(reduceMotion ? nil : .timingCurve(0.2, 0.8, 0.2, 1, duration: 0.32), value: model.expanded)
+        .animation(.easeOut(duration: 0.12), value: model.snapshot.phase)
     }
+
 }
 
 struct CompactView: View {
     @ObservedObject var model: IslandViewModel
+    let palette: IslandPalette
 
     private var snapshot: IslandSnapshot { model.snapshot }
     private var title: String {
@@ -71,11 +83,11 @@ struct CompactView: View {
         HStack(spacing: 5) {
             PhaseDot(phase: snapshot.phase)
             if model.isDemo {
-                Text("DEMO").font(.system(size: 9, weight: .bold)).foregroundStyle(.white.opacity(0.55))
+                Text("DEMO").font(.system(size: 9, weight: .bold)).foregroundStyle(palette.muted)
             }
             Text(title).font(.system(size: 11, weight: .medium)).lineLimit(1).truncationMode(.tail)
         }
-        .foregroundStyle(.white.opacity(0.94))
+        .foregroundStyle(palette.foreground)
         .padding(.leading, 10)
     }
 
@@ -83,10 +95,10 @@ struct CompactView: View {
         HStack(spacing: 5) {
             if let quota = snapshot.quota {
                 Text(IslandFormatter.percent(quota.remainingPercent))
-                    .foregroundStyle(quotaColor(quota))
+                    .foregroundStyle(palette.quotaColor(quota))
             }
             if snapshot.totalTokens > 0 {
-                Text(IslandFormatter.tokens(snapshot.totalTokens)).foregroundStyle(.white.opacity(0.6))
+                Text(IslandFormatter.tokens(snapshot.totalTokens)).foregroundStyle(palette.secondary)
             }
         }
         .font(.system(size: 10, weight: .medium, design: .monospaced))
@@ -98,6 +110,7 @@ struct CompactView: View {
 
 struct ExpandedView: View {
     @ObservedObject var model: IslandViewModel
+    let palette: IslandPalette
     private var snapshot: IslandSnapshot { model.snapshot }
 
     var body: some View {
@@ -111,7 +124,7 @@ struct ExpandedView: View {
             topBar
             VStack(alignment: .leading, spacing: 8) {
                 header(now: now)
-                Rectangle().fill(.white.opacity(0.08)).frame(height: 1)
+                Rectangle().fill(palette.track).frame(height: 1)
                 if let quota = snapshot.quota {
                     quotaRow(quota, now: now)
                 }
@@ -120,13 +133,13 @@ struct ExpandedView: View {
                 }
                 HStack {
                     Text(Copy.text("Session total", "会话累计"))
-                        .foregroundStyle(.white.opacity(0.55))
+                        .foregroundStyle(palette.muted)
                     Spacer()
                     if snapshot.totalTokens > 0 {
                         Text("\(IslandFormatter.tokens(snapshot.totalTokens)) tokens")
                             .fontWeight(.medium).monospacedDigit()
                     } else {
-                        Text("—").foregroundStyle(.white.opacity(0.45))
+                        Text("—").foregroundStyle(palette.muted)
                     }
                 }
                 .font(.system(size: 10))
@@ -134,11 +147,11 @@ struct ExpandedView: View {
             }
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .background(palette.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .padding(.horizontal, 18)
             Spacer(minLength: 0)
         }
-        .foregroundStyle(.white)
+        .foregroundStyle(palette.foreground)
         .padding(.top, 3)
         .padding(.bottom, 10)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -148,14 +161,14 @@ struct ExpandedView: View {
         HStack {
             Text(model.isDemo ? "CODEX · DEMO" : "CODEX")
                 .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.45))
+                .foregroundStyle(palette.muted)
             Spacer(minLength: model.metrics.hasHardwareNotch ? model.metrics.notchWidth : 0)
             Button(action: { model.dismiss() }) {
                 Image(systemName: "xmark")
                     .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.65))
+                    .foregroundStyle(palette.secondary)
                     .frame(width: 23, height: 23)
-                    .background(.white.opacity(0.08), in: Circle())
+                    .background(palette.control, in: Circle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel(Text(Copy.text("Close", "关闭")))
@@ -180,14 +193,14 @@ struct ExpandedView: View {
                         Text(Copy.duration(now.timeIntervalSince(startedAt))).fixedSize()
                     }
                 }
-                .font(.system(size: 10)).foregroundStyle(.white.opacity(0.58))
+                .font(.system(size: 10)).foregroundStyle(palette.secondary)
             }
             Spacer(minLength: 2)
             Button(action: NotchController.openCodex) {
                 Text(Copy.text("Open Codex", "打开 Codex"))
                     .font(.system(size: 10, weight: .semibold))
                     .padding(.horizontal, 9).padding(.vertical, 6)
-                    .background(.white.opacity(snapshot.phase == .waiting ? 0.20 : 0.12), in: Capsule())
+                    .background(palette.control, in: Capsule())
             }
             .buttonStyle(.plain)
         }
@@ -196,14 +209,14 @@ struct ExpandedView: View {
     private func quotaRow(_ quota: QuotaSnapshot, now: Date) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(alignment: .firstTextBaseline) {
-                Text(Copy.window(quota.windowMinutes)).foregroundStyle(.white.opacity(0.62))
+                Text(Copy.window(quota.windowMinutes)).foregroundStyle(palette.secondary)
                 Spacer(minLength: 5)
                 Text(Copy.text("\(IslandFormatter.percent(quota.remainingPercent)) remaining", "剩余 \(IslandFormatter.percent(quota.remainingPercent))"))
-                    .fontWeight(.semibold).foregroundStyle(quotaColor(quota)).monospacedDigit()
+                    .fontWeight(.semibold).foregroundStyle(palette.quotaColor(quota)).monospacedDigit()
             }
-            meter(quota.usedPercent / 100, color: quotaColor(quota))
+            meter(quota.usedPercent / 100, color: palette.quotaColor(quota))
             if let reset = quota.resetsAt {
-                Text(Copy.reset(reset, now: now)).font(.system(size: 9)).foregroundStyle(.white.opacity(0.5))
+                Text(Copy.reset(reset, now: now)).font(.system(size: 9)).foregroundStyle(palette.muted)
             }
         }
         .font(.system(size: 11))
@@ -213,15 +226,15 @@ struct ExpandedView: View {
     private func contextRow(_ context: Double) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack {
-                Text(Copy.text("Context", "上下文")).foregroundStyle(.white.opacity(0.62))
+                Text(Copy.text("Context", "上下文")).foregroundStyle(palette.secondary)
                 Spacer(minLength: 5)
                 Text("\(IslandFormatter.tokens(snapshot.contextUsedTokens)) / \(IslandFormatter.tokens(snapshot.contextWindowTokens))")
                     .monospacedDigit()
                 Text(Copy.text("· \(IslandFormatter.percent((1 - context) * 100)) free", "· 剩余 \(IslandFormatter.percent((1 - context) * 100))"))
-                    .foregroundStyle(.white.opacity(0.6)).monospacedDigit()
+                    .foregroundStyle(palette.secondary).monospacedDigit()
             }
             .lineLimit(1).minimumScaleFactor(0.85)
-            meter(context, color: .white.opacity(0.75))
+            meter(context, color: palette.accent)
         }
         .font(.system(size: 11))
         .accessibilityElement(children: .combine)
@@ -230,7 +243,7 @@ struct ExpandedView: View {
     private func meter(_ progress: Double, color: Color) -> some View {
         GeometryReader { proxy in
             ZStack(alignment: .leading) {
-                Capsule().fill(.white.opacity(0.10))
+                Capsule().fill(palette.track)
                 Capsule().fill(color).frame(width: proxy.size.width * min(1, max(0, progress)))
             }
         }
@@ -242,10 +255,11 @@ struct ExpandedView: View {
 struct IslandBackground: View {
     let metrics: NotchMetrics
     let expanded: Bool
+    let palette: IslandPalette
 
     var body: some View {
         IslandShape(shoulder: expanded ? 14 : 5, bottomRadius: expanded ? 24 : 12)
-            .fill(Color.black)
+            .fill(palette.background)
     }
 }
 
@@ -292,13 +306,5 @@ struct PhaseDot: View {
         case .error: return .red
         case .idle: return .gray
         }
-    }
-}
-
-func quotaColor(_ quota: QuotaSnapshot) -> Color {
-    switch quota.risk {
-    case .normal: return .white
-    case .warning: return .orange
-    case .critical: return .red
     }
 }

@@ -74,6 +74,11 @@ expect(clamped.maxX <= narrowScreen.maxX - 8, "expanded stays inside the display
 // MARK: - Formatting
 
 section("formatting")
+expectEqual(IslandTheme.resolve(nil, dark: true), .obsidian, "default follows dark system appearance")
+expectEqual(IslandTheme.resolve(nil, dark: false), .moonlight, "default follows light system appearance")
+expectEqual(IslandTheme.resolve("system", dark: false), .moonlight, "system theme uses light appearance")
+expectEqual(IslandTheme.resolve("deepSea", dark: false), .deepSea, "explicit theme is stable across system appearance")
+expectEqual(IslandTheme.resolve("unknown", dark: true), .obsidian, "unknown saved theme falls back safely")
 expectEqual(IslandFormatter.tokens(0), "0", "tokens 0")
 expectEqual(IslandFormatter.tokens(999), "999", "tokens < 1k")
 expectEqual(IslandFormatter.tokens(12_345), "12.3k", "tokens 12.3k")

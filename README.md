@@ -65,6 +65,8 @@ The app shows one quota window reported by Codex. Its duration is taken from the
 
 The menu bar icon offers **Open Codex**, **Copy hook config**, **Reveal data folder**, and **Quit**. The app does not claim to jump to a particular session.
 
+Choose **Theme** in the menu bar to select Obsidian, Moonlight, Deep Sea, or Amber. **Follow System** automatically selects Obsidian in Dark Mode and Moonlight in Light Mode; the choice is remembered.
+
 ### Optional: event notifications
 
 Polling works without configuration. To forward supported Codex notifications, copy the hook configuration from the menu bar and add it to `~/.codex/config.toml`, for example:

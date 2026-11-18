@@ -11,7 +11,7 @@ final class NotchController {
     private var localMonitor: Any?
     private var expandWorkItem: DispatchWorkItem?
     private var collapseWorkItem: DispatchWorkItem?
-    private var lastExpanded = false
+    private var resizeWorkItem: DispatchWorkItem?
 
     private let expandDelay: TimeInterval = 0.18
     private let collapseDelay: TimeInterval = 0.32
@@ -43,6 +43,7 @@ final class NotchController {
     func stop() {
         cancelExpand()
         cancelCollapse()
+        resizeWorkItem?.cancel()
         removeMouseMonitors()
         NotificationCenter.default.removeObserver(self)
         model.onFrameChange = nil
@@ -70,22 +71,26 @@ final class NotchController {
         let frame = model.expanded
             ? NotchGeometry.expandedFrame(for: model.metrics, height: height)
             : NotchGeometry.compactFrame(for: model.metrics)
+        resizeWorkItem?.cancel()
+        resizeWorkItem = nil
         guard panel.frame != frame else { return }
-        let modeChanged = model.expanded != lastExpanded
-        let contentHeightChanged = model.expanded && panel.frame.height != frame.height
-        let animate = panel.isVisible && (modeChanged || contentHeightChanged)
-            && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        lastExpanded = model.expanded
-        if animate {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.32
-                context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1)
-                panel.animator().setFrame(frame, display: true)
+        if !model.expanded && panel.isVisible && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            // Keep the carrier large until the SwiftUI shape finishes shrinking.
+            let item = DispatchWorkItem { [weak self] in
+                guard let self, !self.model.expanded else { return }
+                self.resizeWorkItem = nil
+                self.setFrame(frame)
             }
+            resizeWorkItem = item
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.32, execute: item)
         } else {
-            panel.setFrame(frame, display: true)
-            hostingView?.frame = CGRect(origin: .zero, size: frame.size)
+            setFrame(frame)
         }
+    }
+
+    private func setFrame(_ frame: CGRect) {
+        panel.setFrame(frame, display: true)
+        hostingView?.frame = CGRect(origin: .zero, size: frame.size)
     }
 
     private func currentMetrics() -> NotchMetrics {
@@ -132,7 +137,8 @@ final class NotchController {
     private func pointerMoved() {
         let point = NSEvent.mouseLocation
         // When collapsed the hit area is the notch itself; when expanded it is the card.
-        let hitFrame = NotchGeometry.hitFrame(panelFrame: panel.frame, slop: 3)
+        let logicalFrame = model.expanded ? panel.frame : NotchGeometry.compactFrame(for: model.metrics)
+        let hitFrame = NotchGeometry.hitFrame(panelFrame: logicalFrame, slop: 3)
         let inside = hitFrame.contains(point)
 
         if inside {
