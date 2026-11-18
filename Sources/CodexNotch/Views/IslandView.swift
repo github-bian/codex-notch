@@ -22,7 +22,11 @@ struct IslandView: View {
                 IslandBackground(metrics: model.metrics, expanded: model.expanded, palette: palette)
             }
             if model.expanded {
-                ExpandedView(model: model, palette: palette).transition(.opacity)
+                ExpandedView(model: model, palette: palette)
+                    .transition(reduceMotion ? .opacity : .asymmetric(
+                        insertion: .opacity.animation(.easeOut(duration: 0.14).delay(0.14)),
+                        removal: .opacity.animation(.easeOut(duration: 0.1))
+                    ))
             } else if !model.snapshot.isIdle {
                 CompactView(model: model, palette: palette).transition(.opacity)
             }
