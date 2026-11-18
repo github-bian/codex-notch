@@ -35,6 +35,20 @@ These images are rendered from the actual app UI with **demo data**. They show t
 
 The waiting state requires a supported approval event; the island does not approve commands. Completed and failed states are temporary and eventually disappear when not expanded or pinned.
 
+## Choose your theme
+
+Four themes let the island fit your workspace. The screenshots show the running app with demo data on an external display without a physical notch.
+
+| Obsidian | Moonlight |
+| :--- | :--- |
+| ![Obsidian theme in the demo workspace](docs/images/themes/obsidian.png) | ![Moonlight theme in the demo workspace](docs/images/themes/moonlight.png) |
+| Deep Sea | Amber |
+| ![Deep Sea theme in the demo workspace](docs/images/themes/deep-sea.png) | ![Amber theme in the demo workspace](docs/images/themes/amber.png) |
+
+1. Click the Codex Notch icon in the macOS menu bar.
+2. Open **Theme** and choose **Obsidian**, **Moonlight**, **Deep Sea**, or **Amber**.
+3. Choose **Follow System** to use Obsidian in Dark Mode and Moonlight in Light Mode. Your selection is saved across launches.
+
 ## At a glance
 
 - **Status:** running, waiting, completed or failed.
@@ -64,8 +78,6 @@ Normal mode reads local rollout files under `~/.codex/sessions`. It follows the 
 The app shows one quota window reported by Codex. Its duration is taken from the data, so it may be five hours, seven days, or another duration. Quota and context sections are hidden when their data is unavailable. Total tokens are cumulative for the session, not just the current turn. The elapsed time is shown when a start time is available; an old inactive session is not treated as live.
 
 The menu bar icon offers **Open Codex**, **Copy hook config**, **Reveal data folder**, and **Quit**. The app does not claim to jump to a particular session.
-
-Choose **Theme** in the menu bar to select Obsidian, Moonlight, Deep Sea, or Amber. **Follow System** automatically selects Obsidian in Dark Mode and Moonlight in Light Mode; the choice is remembered.
 
 ### Optional: event notifications
 
