@@ -5,7 +5,7 @@ import Foundation
 ///
 /// `notchWidth == 0` means "no hardware notch" (external display, older Mac).
 /// The UI still renders, but as a floating pill under the menu bar instead of
-/// wings attached to the notch.
+/// a simulated island attached to the top edge.
 public struct NotchMetrics: Equatable {
     public var screenFrame: CGRect
     public var notchWidth: CGFloat
@@ -30,9 +30,9 @@ public struct NotchMetrics: Equatable {
 public enum NotchGeometry {
     public static let minimumNotchWidth: CGFloat = 60
     public static let compactWingWidth: CGFloat = 96
-    public static let expandedWidth: CGFloat = 420
-    public static let expandedHeight: CGFloat = 236
-    public static let simulatedPillWidth: CGFloat = 210
+    public static let expandedWidth: CGFloat = 440
+    public static let expandedHeight: CGFloat = 196
+    public static let simulatedPillWidth: CGFloat = 300
     public static let simulatedPillHeight: CGFloat = 26
 
     /// macOS reports the two areas beside the notch; what is left is the notch.
@@ -57,18 +57,16 @@ public enum NotchGeometry {
                 height: metrics.notchHeight
             )
         }
-        // No notch: drop the pill below the menu bar so it never covers app menus.
-        let width = simulatedPillWidth
-        let height = simulatedPillHeight
-        let screen = metrics.screenFrame
-        let x = min(max(screen.midX - width / 2, screen.minX + 8), screen.maxX - width - 8)
-        let y = screen.maxY - metrics.notchHeight - 6 - height
-        return CGRect(x: x.rounded(), y: y.rounded(), width: width, height: height)
+        return anchoredFrame(for: metrics, width: simulatedPillWidth, height: max(simulatedPillHeight, metrics.notchHeight))
     }
 
-    public static func expandedFrame(for metrics: NotchMetrics) -> CGRect {
+    public static func expandedContentHeight(hasQuota: Bool, hasReset: Bool, hasContext: Bool) -> CGFloat {
+        160 + (hasQuota ? (hasReset ? 36 : 23) : 0) - (hasContext ? 0 : 25)
+    }
+
+    public static func expandedFrame(for metrics: NotchMetrics, height: CGFloat = expandedHeight) -> CGRect {
         let width = min(expandedWidth, max(320, metrics.screenFrame.width - 80))
-        return anchoredFrame(for: metrics, width: width, height: expandedHeight)
+        return anchoredFrame(for: metrics, width: width, height: height)
     }
 
     /// Top-center anchored, clamped inside the display.

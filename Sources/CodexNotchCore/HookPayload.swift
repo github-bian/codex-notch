@@ -38,6 +38,17 @@ public struct HookEvent: Equatable {
 }
 
 public enum HookParser {
+    /// Persist only the fields needed to show lifecycle state; never store message bodies.
+    public static func sanitizedLine(_ line: String) -> String? {
+        guard let event = parse(line: line) else { return nil }
+        var safe: [String: String] = ["type": event.rawType]
+        if let id = event.threadID { safe["thread-id"] = id }
+        if let id = event.turnID { safe["turn-id"] = id }
+        if let cwd = event.cwd { safe["cwd"] = cwd }
+        guard let data = try? JSONSerialization.data(withJSONObject: safe, options: [.sortedKeys]),
+              let json = String(data: data, encoding: .utf8) else { return nil }
+        return json
+    }
     /// Accepts both Codex's dashed payload (`thread-id`, `turn-id`) and our own
     /// snake/camel variants, so the hook helper can stay a dumb pipe.
     public static func parse(line: String) -> HookEvent? {

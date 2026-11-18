@@ -16,7 +16,7 @@ final class DemoDriver {
         apply(step: 0)
         let timer = Timer(timeInterval: 3.0, repeats: true) { [weak self] _ in
             guard let self else { return }
-            self.step = (self.step + 1) % 5
+            self.step = (self.step + 1) % 7
             self.apply(step: self.step)
         }
         RunLoop.main.add(timer, forMode: .common)
@@ -53,6 +53,12 @@ final class DemoDriver {
             snapshot.phase = .done
             snapshot.note = nil
         case 3:
+            snapshot.phase = .error
+        case 4:
+            snapshot.quota?.usedPercent = 92
+        case 5:
+            snapshot.quota = nil
+        case 6:
             snapshot = .idle
         default:
             break

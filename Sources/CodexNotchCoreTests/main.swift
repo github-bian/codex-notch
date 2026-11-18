@@ -52,7 +52,12 @@ expectEqual(compact.midX, screen.midX, "compact is centred")
 let bare = NotchMetrics(screenFrame: screen, notchWidth: 0, notchHeight: 24)
 let pill = NotchGeometry.compactFrame(for: bare)
 expectEqual(pill.width, NotchGeometry.simulatedPillWidth, "no-notch pill keeps a fixed width")
-expect(pill.maxY < screen.maxY - 24, "no-notch pill drops below the menu bar")
+expectEqual(pill.maxY, screen.maxY, "simulated island touches the top edge")
+let bareExpanded = NotchGeometry.expandedFrame(for: bare)
+expectEqual(bareExpanded.maxY, screen.maxY, "simulated expanded island stays attached to the top edge")
+expectEqual(NotchGeometry.expandedContentHeight(hasQuota: false, hasReset: false, hasContext: true), 160, "missing quota reduces expanded height")
+expectEqual(NotchGeometry.expandedContentHeight(hasQuota: true, hasReset: true, hasContext: true), 196, "quota and reset fit in the expanded height")
+expectEqual(NotchGeometry.expandedContentHeight(hasQuota: false, hasReset: false, hasContext: false), 135, "missing metrics do not leave an empty panel")
 
 let expanded = NotchGeometry.expandedFrame(for: notched)
 expectEqual(expanded.width, NotchGeometry.expandedWidth, "expanded width")
@@ -79,10 +84,19 @@ expectEqual(IslandFormatter.percent(99.6), "100%", "percent caps at 100")
 expectEqual(IslandFormatter.duration(45), "45s", "duration seconds")
 expectEqual(IslandFormatter.duration(90), "1m", "duration minutes")
 expectEqual(IslandFormatter.duration(3_661), "1h 1m", "duration hours")
+expectEqual(Copy.duration(90_000, chinese: false), "1d 1h", "English duration includes days")
+expectEqual(Copy.duration(90_000, chinese: true), "1天 1小时", "Chinese duration includes days")
+expectEqual(Copy.duration(45, chinese: true), "45秒", "Chinese duration uses localized seconds")
 
 let now = Date(timeIntervalSince1970: 1_763_000_000)
 expectEqual(IslandFormatter.countdown(to: now.addingTimeInterval(3_600), now: now), "1h", "countdown hours")
 expectEqual(IslandFormatter.countdown(to: now.addingTimeInterval(-5), now: now), "now", "countdown past")
+
+let quota = QuotaSnapshot(usedPercent: 65, windowMinutes: 10_080, resetsAt: nil, planType: nil)
+expectEqual(IslandSnapshot(quota: quota).quotaPercent, 35, "compact quota reports remaining, not used")
+expectEqual(quota.risk, .normal, "quota below 70 percent used is normal")
+expectEqual(QuotaSnapshot(usedPercent: 70, windowMinutes: 300, resetsAt: nil, planType: nil).risk, .warning, "quota warning starts at 70 percent used")
+expectEqual(QuotaSnapshot(usedPercent: 90, windowMinutes: 300, resetsAt: nil, planType: nil).risk, .critical, "quota critical starts at 90 percent used")
 
 // MARK: - Rollout parsing
 
@@ -136,6 +150,12 @@ if case let .context(cwd)? = RolloutParser.parse(line: #"{"payload":{"type":"tur
 expectEqual(RolloutParser.parse(line: #"{"payload":{"type":"reasoning","text":"x"}}"#), nil, "unknown event ignored")
 expectEqual(RolloutParser.parse(line: "not json"), nil, "garbage line ignored")
 expectEqual(RolloutParser.parse(line: #"{"payload":{"type":"token_count"}}"#), nil, "token_count without info ignored")
+let missingContext = #"{"payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":50},"model_context_window":258400}}}"#
+if case let .tokens(token)? = RolloutParser.parse(line: missingContext) {
+    expectEqual(token.contextWindowTokens, 0, "missing input usage does not invent a full context")
+} else {
+    expect(false, "token count with missing context parses")
+}
 
 // MARK: - Hook payloads
 
@@ -187,6 +207,67 @@ let newest = SessionLocator.newestRollout(in: root)
 expectEqual(newest?.lastPathComponent, "rollout-new.jsonl", "picks the newest rollout, not other jsonl")
 expectEqual(SessionLocator.dayFolder(of: newest!), "2026-11-17", "day folder from path")
 expectEqual(SessionLocator.newestRollout(in: root.appendingPathComponent("missing")), nil, "missing root -> nil")
+
+// MARK: - Real rollout bootstrap and hook boundary
+
+section("session bootstrap")
+var lineBuffer = JSONLBuffer(maxLineBytes: 12)
+let splitUTF8 = Data("项目\n".utf8)
+expect(lineBuffer.append(splitUTF8.prefix(2)).isEmpty, "partial UTF-8 is buffered")
+expectEqual(lineBuffer.append(splitUTF8.dropFirst(2)).first.flatMap { String(data: $0, encoding: .utf8) }, "项目", "split UTF-8 stays intact")
+expect(lineBuffer.append(Data(String(repeating: "x", count: 13).utf8)).isEmpty, "oversized partial line is not delivered")
+expectEqual(lineBuffer.append(Data("continued\nok\n".utf8)).compactMap { String(data: $0, encoding: .utf8) }, ["ok"], "reader recovers after an oversized line")
+let bootstrapFile = root.appendingPathComponent("bootstrap.jsonl")
+let projectLine = #"{"type":"session_meta","payload":{"cwd":"/tmp/example-project"}}"#
+let startLine = #"{"type":"event_msg","payload":{"type":"task_started","started_at":1763000000}}"#
+let paddingLine = "{\"type\":\"response_item\",\"payload\":{\"text\":\"" + String(repeating: "x", count: 180_000) + "\"}}"
+let partialLine = #"{"type":"event_msg","payload":{"type":"token_count""#
+let completeLines = [projectLine, startLine, paddingLine, tokenLine].joined(separator: "\n") + "\n"
+try! (completeLines + partialLine).write(to: bootstrapFile, atomically: true, encoding: .utf8)
+if let restored = try? RolloutBootstrap.read(file: bootstrapFile) {
+    expectEqual(restored.offset, UInt64(completeLines.utf8.count), "incomplete final line is reread after the next append")
+    expect(restored.signals.contains(.context(cwd: "/tmp/example-project")), "restores project from real session_meta shape")
+    expect(restored.signals.contains(.taskStarted(turnID: nil, startedAt: Date(timeIntervalSince1970: 1_763_000_000))), "restores start earlier than the last 64 KB")
+    if case let .tokens(value)? = restored.signals.first(where: { if case .tokens = $0 { return true }; return false }) {
+        expectEqual(value.totalTokens, 123_456, "restores latest actual token count")
+        expectEqual(value.quota?.remainingPercent, 61.5, "restores remaining actual quota")
+    } else {
+        expect(false, "bootstrap restores token usage")
+    }
+} else {
+    expect(false, "bootstrap reads rollout")
+}
+
+let boundaryFile = root.appendingPathComponent("bootstrap-boundary.jsonl")
+let tokenBytes = Data((tokenLine + "\n").utf8)
+var boundaryData = Data("x\n".utf8)
+boundaryData.append(tokenBytes)
+boundaryData.append(Data(repeating: 120, count: 4 * 1024 * 1024 - tokenBytes.count - 1))
+boundaryData.append(10)
+try! boundaryData.write(to: boundaryFile)
+let boundarySignals = (try? RolloutBootstrap.read(file: boundaryFile))?.signals ?? []
+expect(boundarySignals.contains { if case .tokens = $0 { return true }; return false }, "retains a complete record at the exact tail boundary")
+
+let oldCompletion = #"{"timestamp":"2020-01-01T00:00:00.000Z","type":"event_msg","payload":{"type":"task_complete"}}"#
+try! (completeLines + oldCompletion + "\n").write(to: bootstrapFile, atomically: true, encoding: .utf8)
+expectEqual((try? RolloutBootstrap.read(file: bootstrapFile))?.signals.last, .turnAborted, "old completed turn is not shown as newly completed")
+try! completeLines.write(to: bootstrapFile, atomically: true, encoding: .utf8)
+try! fileManager.setAttributes([.modificationDate: Date().addingTimeInterval(-1_801)], ofItemAtPath: bootstrapFile.path)
+expectEqual((try? RolloutBootstrap.read(file: bootstrapFile))?.signals.last, .turnAborted, "old running snapshot is not shown as live")
+
+section("hook privacy")
+let hook = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent().appendingPathComponent("codexnotch-hook")
+let hookDir = root.appendingPathComponent("hook", isDirectory: true)
+let process = Process()
+process.executableURL = hook
+process.environment = ProcessInfo.processInfo.environment.merging(["CODEX_NOTCH_HOME": hookDir.path]) { _, new in new }
+process.arguments = [#"{"type":"agent-turn-complete","thread-id":"example","input-messages":["PRIVATE_PROMPT"],"last-assistant-message":"PRIVATE_RESPONSE","cwd":"/tmp/example-project"}"#]
+try! process.run()
+process.waitUntilExit()
+let saved = (try? String(contentsOf: hookDir.appendingPathComponent("events.jsonl"), encoding: .utf8)) ?? ""
+expectEqual(process.terminationStatus, 0, "hook succeeds")
+expect(!saved.contains("PRIVATE_PROMPT") && !saved.contains("PRIVATE_RESPONSE"), "hook does not persist prompt or answer")
+expectEqual(HookParser.parse(line: saved)?.kind, .turnCompleted, "sanitized hook still delivers completion")
 
 // MARK: - Summary
 

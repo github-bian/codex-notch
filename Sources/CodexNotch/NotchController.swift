@@ -11,6 +11,7 @@ final class NotchController {
     private var localMonitor: Any?
     private var expandWorkItem: DispatchWorkItem?
     private var collapseWorkItem: DispatchWorkItem?
+    private var lastExpanded = false
 
     private let expandDelay: TimeInterval = 0.18
     private let collapseDelay: TimeInterval = 0.32
@@ -40,7 +41,11 @@ final class NotchController {
     }
 
     func stop() {
+        cancelExpand()
+        cancelCollapse()
         removeMouseMonitors()
+        NotificationCenter.default.removeObserver(self)
+        model.onFrameChange = nil
         panel.orderOut(nil)
     }
 
@@ -56,12 +61,31 @@ final class NotchController {
     }
 
     private func applyFrame() {
+        let snapshot = model.snapshot
+        let height = NotchGeometry.expandedContentHeight(
+            hasQuota: snapshot.quota != nil,
+            hasReset: snapshot.quota?.resetsAt != nil,
+            hasContext: snapshot.contextPercent != nil
+        ) + (model.metrics.hasHardwareNotch ? max(0, model.metrics.notchHeight - 24) : 0)
         let frame = model.expanded
-            ? NotchGeometry.expandedFrame(for: model.metrics)
+            ? NotchGeometry.expandedFrame(for: model.metrics, height: height)
             : NotchGeometry.compactFrame(for: model.metrics)
         guard panel.frame != frame else { return }
-        panel.setFrame(frame, display: true)
-        hostingView?.frame = CGRect(origin: .zero, size: frame.size)
+        let modeChanged = model.expanded != lastExpanded
+        let contentHeightChanged = model.expanded && panel.frame.height != frame.height
+        let animate = panel.isVisible && (modeChanged || contentHeightChanged)
+            && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        lastExpanded = model.expanded
+        if animate {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.32
+                context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1)
+                panel.animator().setFrame(frame, display: true)
+            }
+        } else {
+            panel.setFrame(frame, display: true)
+            hostingView?.frame = CGRect(origin: .zero, size: frame.size)
+        }
     }
 
     private func currentMetrics() -> NotchMetrics {

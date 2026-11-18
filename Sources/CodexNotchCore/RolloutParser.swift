@@ -39,7 +39,7 @@ public enum RolloutParser {
         guard let object = try? JSONSerialization.jsonObject(with: data),
               let root = object as? [String: Any],
               let payload = root["payload"] as? [String: Any],
-              let type = payload["type"] as? String
+              let type = (payload["type"] as? String) ?? (root["type"] as? String)
         else { return nil }
 
         switch type {
@@ -57,7 +57,7 @@ public enum RolloutParser {
             return .turnAborted
         case "token_count":
             return tokenSnapshot(from: payload).map(RolloutSignal.tokens)
-        case "turn_context":
+        case "turn_context", "session_meta":
             if let cwd = string(payload["cwd"]) ?? string(payload["working_dir"]) {
                 return .context(cwd: cwd)
             }
@@ -80,8 +80,7 @@ public enum RolloutParser {
         let last = info["last_token_usage"] as? [String: Any]
         // `input_tokens` already includes the cached share; never add them up.
         let contextUsed = last.flatMap { int($0["input_tokens"]) }
-            ?? int(info["model_context_window"])
-        let contextWindow = int(info["model_context_window"]) ?? 0
+        let contextWindow = contextUsed == nil ? 0 : (int(info["model_context_window"]) ?? 0)
 
         guard let totalTokens = total, totalTokens >= 0 else { return nil }
 
@@ -95,7 +94,7 @@ public enum RolloutParser {
 
     public static func quota(from raw: [String: Any]?) -> QuotaSnapshot? {
         guard let raw, let primary = raw["primary"] as? [String: Any] else { return nil }
-        guard let used = double(primary["used_percent"]) else { return nil }
+        guard let used = double(primary["used_percent"]), used.isFinite else { return nil }
         return QuotaSnapshot(
             usedPercent: min(100, max(0, used)),
             windowMinutes: int(primary["window_minutes"]) ?? 0,

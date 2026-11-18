@@ -18,9 +18,7 @@ jobs:
         run: swift build --disable-sandbox
 
       - name: Checks
-        run: |
-          BIN="$(swift build --disable-sandbox --show-bin-path)"
-          "$BIN/CodexNotchCoreTests"
+        run: ./scripts/test.sh
 
       - name: Bundle
         run: ./scripts/build-app.sh

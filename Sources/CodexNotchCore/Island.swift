@@ -25,7 +25,15 @@ public struct QuotaSnapshot: Equatable {
     public var remainingPercent: Double {
         min(100, max(0, 100 - usedPercent))
     }
+
+    public var risk: QuotaRisk {
+        if usedPercent >= 90 { return .critical }
+        if usedPercent >= 70 { return .warning }
+        return .normal
+    }
 }
+
+public enum QuotaRisk { case normal, warning, critical }
 
 /// The single value the island renders. Everything else is a side effect.
 public struct IslandSnapshot: Equatable {
@@ -74,7 +82,7 @@ public struct IslandSnapshot: Equatable {
     public var isIdle: Bool { phase == .idle }
 
     /// Used by the collapsed wings; `nil` when Codex has not reported a limit yet.
-    public var quotaPercent: Double? { quota?.usedPercent }
+    public var quotaPercent: Double? { quota?.remainingPercent }
 
     /// One short line for the wings, never the prompt itself.
     public var displayTitle: String {

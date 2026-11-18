@@ -3,274 +3,277 @@ import CodexNotchCore
 
 struct IslandView: View {
     @ObservedObject var model: IslandViewModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ZStack(alignment: .top) {
+            if model.expanded || !model.snapshot.isIdle {
+                IslandBackground(metrics: model.metrics, expanded: model.expanded)
+                    .transition(.opacity)
+            }
             if model.expanded {
-                ExpandedView(model: model)
-                    .transition(.opacity)
+                ExpandedView(model: model).transition(.opacity)
             } else if !model.snapshot.isIdle {
-                CompactView(model: model)
-                    .transition(.opacity)
+                CompactView(model: model).transition(.opacity)
             } else {
                 Color.clear
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .animation(.spring(response: 0.3, dampingFraction: 0.86), value: model.expanded)
+        .animation(reduceMotion ? .easeOut(duration: 0.12) : .timingCurve(0.2, 0.8, 0.2, 1, duration: 0.32), value: model.expanded)
         .animation(.easeOut(duration: 0.18), value: model.snapshot.phase)
     }
 }
 
-// MARK: - Compact wings
-
 struct CompactView: View {
     @ObservedObject var model: IslandViewModel
 
+    private var snapshot: IslandSnapshot { model.snapshot }
+    private var title: String {
+        if snapshot.phase != .running { return Copy.phase(snapshot.phase) }
+        return snapshot.title ?? snapshot.projectName ?? Copy.phase(snapshot.phase)
+    }
+
     var body: some View {
-        let metrics = model.metrics
         Group {
-            if metrics.hasHardwareNotch {
+            if model.metrics.hasHardwareNotch {
                 HStack(spacing: 0) {
-                    leading
-                        .padding(.leading, 14)
-                        .frame(width: NotchGeometry.compactWingWidth, alignment: .leading)
-                    Color.clear
-                        .frame(width: metrics.notchWidth)
-                    trailing
-                        .padding(.trailing, 14)
-                        .frame(width: NotchGeometry.compactWingWidth, alignment: .trailing)
+                    leading.frame(width: NotchGeometry.compactWingWidth, alignment: .leading)
+                    Color.clear.frame(width: model.metrics.notchWidth)
+                    trailing.frame(width: NotchGeometry.compactWingWidth, alignment: .trailing)
                 }
+                .padding(.horizontal, 0)
             } else {
                 HStack(spacing: 8) {
                     leading
-                    Spacer(minLength: 6)
+                    Spacer(minLength: 4)
                     trailing
                 }
-                .padding(.horizontal, 12)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(IslandBackground(metrics: metrics, expanded: false))
         .contentShape(Rectangle())
         .onTapGesture { model.togglePinned() }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text("\(Copy.phase(snapshot.phase)), \(title)"))
+        .accessibilityValue(Text(accessibilityQuota))
+        .accessibilityHint(Text(Copy.text("Click to pin the panel open", "点击钉住展开面板")))
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { model.togglePinned() }
+    }
+
+    private var accessibilityQuota: String {
+        guard let percent = snapshot.quotaPercent else { return "" }
+        return Copy.text("\(IslandFormatter.percent(percent)) remaining", "剩余 \(IslandFormatter.percent(percent))")
     }
 
     private var leading: some View {
-        HStack(spacing: 6) {
-            PhaseDot(phase: model.snapshot.phase)
-            Text(model.snapshot.displayTitle)
-                .font(.system(size: 11, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.92))
-                .lineLimit(1)
-                .truncationMode(.tail)
+        HStack(spacing: 5) {
+            PhaseDot(phase: snapshot.phase)
+            if model.isDemo {
+                Text("DEMO").font(.system(size: 9, weight: .bold)).foregroundStyle(.white.opacity(0.55))
+            }
+            Text(title).font(.system(size: 11, weight: .medium)).lineLimit(1).truncationMode(.tail)
         }
+        .foregroundStyle(.white.opacity(0.94))
+        .padding(.leading, 10)
     }
 
-    @ViewBuilder
     private var trailing: some View {
-        HStack(spacing: 6) {
-            if let percent = model.snapshot.quotaPercent {
-                Text(IslandFormatter.percent(percent))
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(quotaColor(percent))
+        HStack(spacing: 5) {
+            if let quota = snapshot.quota {
+                Text(IslandFormatter.percent(quota.remainingPercent))
+                    .foregroundStyle(quotaColor(quota))
             }
-            if model.snapshot.totalTokens > 0 {
-                Text(IslandFormatter.tokens(model.snapshot.totalTokens))
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.55))
+            if snapshot.totalTokens > 0 {
+                Text(IslandFormatter.tokens(snapshot.totalTokens)).foregroundStyle(.white.opacity(0.6))
             }
         }
+        .font(.system(size: 10, weight: .medium, design: .monospaced))
         .lineLimit(1)
         .fixedSize(horizontal: true, vertical: false)
+        .padding(.trailing, 10)
     }
 }
-
-// MARK: - Expanded card
 
 struct ExpandedView: View {
     @ObservedObject var model: IslandViewModel
-
     private var snapshot: IslandSnapshot { model.snapshot }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            header
-            Divider().overlay(Color.white.opacity(0.08))
-            if let quota = snapshot.quota {
-                meterRow(
-                    label: quotaLabel(quota),
-                    value: "\(IslandFormatter.percent(quota.remainingPercent)) left",
-                    progress: quota.usedPercent / 100,
-                    tint: quotaColor(quota.usedPercent)
-                )
-            }
-            if let context = snapshot.contextPercent {
-                meterRow(
-                    label: "Context",
-                    value: "\(IslandFormatter.tokens(snapshot.contextUsedTokens)) / \(IslandFormatter.tokens(snapshot.contextWindowTokens))",
-                    progress: context,
-                    tint: .blue
-                )
-            }
-            statsRow
-            Spacer(minLength: 0)
-            footer
+        TimelineView(.periodic(from: .now, by: 1)) { timeline in
+            content(now: timeline.date)
         }
-        .padding(18)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(IslandBackground(metrics: model.metrics, expanded: true))
     }
 
-    private var header: some View {
-        HStack(alignment: .center, spacing: 8) {
-            PhaseDot(phase: snapshot.phase)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(snapshot.displayTitle.isEmpty ? "Codex" : snapshot.displayTitle)
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                Text(subtitle)
-                    .font(.system(size: 10, weight: .regular, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.5))
-                    .lineLimit(1)
+    private func content(now: Date) -> some View {
+        VStack(spacing: 4) {
+            topBar
+            VStack(alignment: .leading, spacing: 8) {
+                header(now: now)
+                Rectangle().fill(.white.opacity(0.08)).frame(height: 1)
+                if let quota = snapshot.quota {
+                    quotaRow(quota, now: now)
+                }
+                if let context = snapshot.contextPercent {
+                    contextRow(context)
+                }
+                HStack {
+                    Text(Copy.text("Session total", "会话累计"))
+                        .foregroundStyle(.white.opacity(0.55))
+                    Spacer()
+                    if snapshot.totalTokens > 0 {
+                        Text("\(IslandFormatter.tokens(snapshot.totalTokens)) tokens")
+                            .fontWeight(.medium).monospacedDigit()
+                    } else {
+                        Text("—").foregroundStyle(.white.opacity(0.45))
+                    }
+                }
+                .font(.system(size: 10))
+                .accessibilityElement(children: .combine)
             }
-            Spacer(minLength: 6)
-            Button(action: NotchController.openCodex) {
-                Text("Open")
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(Capsule().fill(Color.white.opacity(0.12)))
-                    .foregroundStyle(.white)
-            }
-            .buttonStyle(.plain)
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .padding(.horizontal, 18)
+            Spacer(minLength: 0)
+        }
+        .foregroundStyle(.white)
+        .padding(.top, 3)
+        .padding(.bottom, 10)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var topBar: some View {
+        HStack {
+            Text(model.isDemo ? "CODEX · DEMO" : "CODEX")
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.45))
+            Spacer(minLength: model.metrics.hasHardwareNotch ? model.metrics.notchWidth : 0)
             Button(action: { model.dismiss() }) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.45))
-                    .frame(width: 20, height: 20)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.65))
+                    .frame(width: 23, height: 23)
+                    .background(.white.opacity(0.08), in: Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(Text(Copy.text("Close", "关闭")))
+        }
+        .padding(.horizontal, 20)
+        .frame(height: max(24, model.metrics.hasHardwareNotch ? model.metrics.notchHeight : 24))
+    }
+
+    private func header(now: Date) -> some View {
+        HStack(alignment: .center, spacing: 8) {
+            PhaseDot(phase: snapshot.phase)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(Copy.phase(snapshot.phase))
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+                HStack(spacing: 4) {
+                    if let title = snapshot.title ?? snapshot.projectName, !title.isEmpty {
+                        Text(title).lineLimit(1).truncationMode(.tail)
+                    }
+                    if let startedAt = snapshot.startedAt, snapshot.phase == .running || snapshot.phase == .waiting {
+                        if snapshot.title != nil || snapshot.projectName != nil { Text("·") }
+                        Text(Copy.duration(now.timeIntervalSince(startedAt))).fixedSize()
+                    }
+                }
+                .font(.system(size: 10)).foregroundStyle(.white.opacity(0.58))
+            }
+            Spacer(minLength: 2)
+            Button(action: NotchController.openCodex) {
+                Text(Copy.text("Open Codex", "打开 Codex"))
+                    .font(.system(size: 10, weight: .semibold))
+                    .padding(.horizontal, 9).padding(.vertical, 6)
+                    .background(.white.opacity(snapshot.phase == .waiting ? 0.20 : 0.12), in: Capsule())
             }
             .buttonStyle(.plain)
         }
     }
 
-    private var subtitle: String {
-        var parts: [String] = []
-        if let project = snapshot.projectName { parts.append(project) }
-        if let startedAt = snapshot.startedAt, snapshot.phase == .running {
-            parts.append(IslandFormatter.duration(Date().timeIntervalSince(startedAt)))
+    private func quotaRow(_ quota: QuotaSnapshot, now: Date) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(Copy.window(quota.windowMinutes)).foregroundStyle(.white.opacity(0.62))
+                Spacer(minLength: 5)
+                Text(Copy.text("\(IslandFormatter.percent(quota.remainingPercent)) remaining", "剩余 \(IslandFormatter.percent(quota.remainingPercent))"))
+                    .fontWeight(.semibold).foregroundStyle(quotaColor(quota)).monospacedDigit()
+            }
+            meter(quota.usedPercent / 100, color: quotaColor(quota))
+            if let reset = quota.resetsAt {
+                Text(Copy.reset(reset, now: now)).font(.system(size: 9)).foregroundStyle(.white.opacity(0.5))
+            }
         }
-        if let note = snapshot.note, !note.isEmpty { parts.append(note) }
-        if parts.isEmpty { parts.append("No active turn") }
-        return parts.joined(separator: " · ")
+        .font(.system(size: 11))
+        .accessibilityElement(children: .combine)
     }
 
-    private func meterRow(label: String, value: String, progress: Double, tint: Color) -> some View {
+    private func contextRow(_ context: Double) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack {
-                Text(label)
-                    .font(.system(size: 10, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.6))
-                Spacer()
-                Text(value)
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.8))
+                Text(Copy.text("Context", "上下文")).foregroundStyle(.white.opacity(0.62))
+                Spacer(minLength: 5)
+                Text("\(IslandFormatter.tokens(snapshot.contextUsedTokens)) / \(IslandFormatter.tokens(snapshot.contextWindowTokens))")
+                    .monospacedDigit()
+                Text(Copy.text("· \(IslandFormatter.percent((1 - context) * 100)) free", "· 剩余 \(IslandFormatter.percent((1 - context) * 100))"))
+                    .foregroundStyle(.white.opacity(0.6)).monospacedDigit()
             }
-            GeometryReader { proxy in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Color.white.opacity(0.08))
-                    Capsule()
-                        .fill(tint)
-                        .frame(width: max(3, proxy.size.width * min(1, max(0, progress))))
-                }
+            .lineLimit(1).minimumScaleFactor(0.85)
+            meter(context, color: .white.opacity(0.75))
+        }
+        .font(.system(size: 11))
+        .accessibilityElement(children: .combine)
+    }
+
+    private func meter(_ progress: Double, color: Color) -> some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                Capsule().fill(.white.opacity(0.10))
+                Capsule().fill(color).frame(width: proxy.size.width * min(1, max(0, progress)))
             }
-            .frame(height: 4)
         }
-    }
-
-    private var statsRow: some View {
-        HStack(spacing: 18) {
-            stat("Tokens", IslandFormatter.tokens(snapshot.totalTokens))
-            if let quota = snapshot.quota, let resetsAt = quota.resetsAt {
-                stat("Resets in", IslandFormatter.countdown(to: resetsAt))
-            }
-            Spacer(minLength: 0)
-        }
-    }
-
-    private func stat(_ label: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label)
-                .font(.system(size: 9, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.4))
-            Text(value)
-                .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.85))
-        }
-    }
-
-    private var footer: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "cursorarrow.rays")
-                .font(.system(size: 9))
-            Text("Hover to peek · click to pin")
-                .font(.system(size: 9, weight: .regular, design: .rounded))
-            Spacer(minLength: 0)
-        }
-        .foregroundStyle(.white.opacity(0.3))
-    }
-
-    private func quotaLabel(_ quota: QuotaSnapshot) -> String {
-        let window: String
-        switch quota.windowMinutes {
-        case 0:
-            window = "Quota"
-        case let minutes where minutes % 1_440 == 0:
-            window = "\(minutes / 1_440)d window"
-        case let minutes where minutes % 60 == 0:
-            window = "\(minutes / 60)h window"
-        default:
-            window = "\(quota.windowMinutes)m window"
-        }
-        if let plan = quota.planType, !plan.isEmpty {
-            return "\(window) · \(plan)"
-        }
-        return window
+        .frame(height: 3)
+        .accessibilityHidden(true)
     }
 }
-
-// MARK: - Shared bits
 
 struct IslandBackground: View {
     let metrics: NotchMetrics
     let expanded: Bool
 
     var body: some View {
-        if expanded {
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(Color.black)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
-                )
-        } else if metrics.hasHardwareNotch {
-            UnevenRoundedRectangle(
-                topLeadingRadius: 0,
-                bottomLeadingRadius: 14,
-                bottomTrailingRadius: 14,
-                topTrailingRadius: 0,
-                style: .continuous
-            )
+        IslandShape(shoulder: expanded ? 14 : 5, bottomRadius: expanded ? 24 : 12)
             .fill(Color.black)
-        } else {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.black)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
-                )
-        }
+    }
+}
+
+/// The curved shoulders make the island flow into the screen's top edge.
+struct IslandShape: Shape {
+    var shoulder: CGFloat
+    var bottomRadius: CGFloat
+
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(shoulder, bottomRadius) }
+        set { shoulder = newValue.first; bottomRadius = newValue.second }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        let s = min(shoulder, rect.width / 4, rect.height / 2)
+        let r = min(bottomRadius, (rect.width - 2 * s) / 2, (rect.height - s) / 2)
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.addQuadCurve(to: CGPoint(x: rect.maxX - s, y: rect.minY + s), control: CGPoint(x: rect.maxX - s, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX - s, y: rect.maxY - r))
+        path.addQuadCurve(to: CGPoint(x: rect.maxX - s - r, y: rect.maxY), control: CGPoint(x: rect.maxX - s, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX + s + r, y: rect.maxY))
+        path.addQuadCurve(to: CGPoint(x: rect.minX + s, y: rect.maxY - r), control: CGPoint(x: rect.minX + s, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX + s, y: rect.minY + s))
+        path.addQuadCurve(to: CGPoint(x: rect.minX, y: rect.minY), control: CGPoint(x: rect.minX + s, y: rect.minY))
+        path.closeSubpath()
+        return path
     }
 }
 
@@ -278,28 +281,24 @@ struct PhaseDot: View {
     let phase: AgentPhase
 
     var body: some View {
-        Circle()
-            .fill(color)
-            .frame(width: 6, height: 6)
-            .overlay(
-                Circle().stroke(color.opacity(0.35), lineWidth: 3)
-                    .opacity(phase == .running ? 1 : 0)
-            )
+        Circle().fill(color).frame(width: 6, height: 6).accessibilityHidden(true)
     }
 
     private var color: Color {
         switch phase {
-        case .running: return Color(red: 1.0, green: 0.62, blue: 0.04)
-        case .waiting: return Color(red: 0.2, green: 0.84, blue: 0.78)
-        case .done: return Color(red: 0.13, green: 0.77, blue: 0.37)
-        case .error: return Color(red: 0.94, green: 0.27, blue: 0.27)
-        case .idle: return Color.white.opacity(0.35)
+        case .running: return .orange
+        case .waiting: return .cyan
+        case .done: return .green
+        case .error: return .red
+        case .idle: return .gray
         }
     }
 }
 
-func quotaColor(_ usedPercent: Double) -> Color {
-    if usedPercent >= 90 { return Color(red: 0.94, green: 0.27, blue: 0.27) }
-    if usedPercent >= 70 { return Color(red: 1.0, green: 0.62, blue: 0.04) }
-    return Color(red: 0.13, green: 0.77, blue: 0.37)
+func quotaColor(_ quota: QuotaSnapshot) -> Color {
+    switch quota.risk {
+    case .normal: return .white
+    case .warning: return .orange
+    case .critical: return .red
+    }
 }

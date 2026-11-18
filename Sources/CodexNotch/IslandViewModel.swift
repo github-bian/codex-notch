@@ -6,6 +6,7 @@ import CodexNotchCore
 ///
 /// All mutation happens on the main thread: watchers hop here before calling `apply`.
 final class IslandViewModel: ObservableObject {
+    let isDemo = CommandLine.arguments.contains("--demo")
     @Published private(set) var snapshot: IslandSnapshot = .idle
     @Published private(set) var metrics: NotchMetrics = .fallback
     @Published var expanded = false
@@ -15,8 +16,16 @@ final class IslandViewModel: ObservableObject {
     var onFrameChange: (() -> Void)?
 
     private var hideWorkItem: DispatchWorkItem?
+    private var selectedThreadID: String?
 
     // MARK: - Inputs
+
+    func resetSession(threadID: String?) {
+        selectedThreadID = threadID
+        cancelHide()
+        snapshot = .idle
+        if expanded { onFrameChange?() }
+    }
 
     func update(metrics: NotchMetrics) {
         guard metrics != self.metrics else { return }
@@ -28,7 +37,7 @@ final class IslandViewModel: ObservableObject {
         switch signal {
         case let .taskStarted(_, startedAt):
             snapshot.phase = .running
-            snapshot.startedAt = startedAt ?? Date()
+            snapshot.startedAt = startedAt
             snapshot.lastActivityAt = Date()
             snapshot.note = nil
             cancelHide()
@@ -37,11 +46,11 @@ final class IslandViewModel: ObservableObject {
             snapshot.totalTokens = token.totalTokens
             snapshot.contextUsedTokens = token.contextUsedTokens
             snapshot.contextWindowTokens = token.contextWindowTokens
-            if let quota = token.quota { snapshot.quota = quota }
+            snapshot.quota = token.quota
             snapshot.lastActivityAt = Date()
             if snapshot.phase == .idle {
                 snapshot.phase = .running
-                snapshot.startedAt = snapshot.startedAt ?? Date()
+                snapshot.startedAt = nil
             }
 
         case let .taskCompleted(turnID, _):
@@ -58,9 +67,12 @@ final class IslandViewModel: ObservableObject {
         case let .context(cwd):
             applyProject(cwd: cwd)
         }
+        if expanded { onFrameChange?() }
     }
 
     func apply(hook: HookEvent) {
+        if let selectedThreadID, let eventThreadID = hook.threadID,
+           selectedThreadID.caseInsensitiveCompare(eventThreadID) != .orderedSame { return }
         switch hook.kind {
         case .turnStarted:
             snapshot.phase = .running
@@ -87,11 +99,13 @@ final class IslandViewModel: ObservableObject {
             snapshot.note = hook.message
         }
         if let cwd = hook.cwd { applyProject(cwd: cwd) }
+        if expanded { onFrameChange?() }
     }
 
     /// Demo seam: replaces the whole snapshot without replaying event semantics.
     func applyForDemo(_ snapshot: IslandSnapshot) {
         self.snapshot = snapshot
+        if expanded { onFrameChange?() }
     }
 
     // MARK: - Interaction
@@ -100,6 +114,7 @@ final class IslandViewModel: ObservableObject {
     func togglePinned() {
         pinned.toggle()
         expanded = pinned
+        if expanded { cancelHide() }
         onFrameChange?()
         if !pinned { maybeAutoHide() }
     }
@@ -109,6 +124,7 @@ final class IslandViewModel: ObservableObject {
         guard expanded != value else { return }
         expanded = value
         if !value && transient { pinned = false }
+        if value { cancelHide() }
         onFrameChange?()
         if !value { maybeAutoHide() }
     }
@@ -124,9 +140,12 @@ final class IslandViewModel: ObservableObject {
 
     private func scheduleHide(after seconds: TimeInterval) {
         cancelHide()
+        guard !pinned, !expanded else { return }
         let item = DispatchWorkItem { [weak self] in
             self?.hideWorkItem = nil
-            self?.maybeAutoHide()
+            guard let self, !self.pinned, !self.expanded else { return }
+            self.snapshot.phase = .idle
+            self.snapshot.note = nil
         }
         hideWorkItem = item
         DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: item)
@@ -134,9 +153,11 @@ final class IslandViewModel: ObservableObject {
 
     private func maybeAutoHide() {
         guard !pinned, !expanded else { return }
-        guard snapshot.phase == .done || snapshot.phase == .error else { return }
-        snapshot.phase = .idle
-        snapshot.note = nil
+        switch snapshot.phase {
+        case .done: scheduleHide(after: 8)
+        case .error: scheduleHide(after: 15)
+        default: break
+        }
     }
 
     private func cancelHide() {
@@ -146,9 +167,8 @@ final class IslandViewModel: ObservableObject {
 
     private func applyProject(cwd: String) {
         guard let name = AppPaths.projectName(from: cwd) else { return }
+        let titleTracksProject = snapshot.title == nil || snapshot.title?.isEmpty == true || snapshot.title == snapshot.projectName
         snapshot.projectName = name
-        if snapshot.title == nil || snapshot.title?.isEmpty == true {
-            snapshot.title = name
-        }
+        if titleTracksProject { snapshot.title = name }
     }
 }
